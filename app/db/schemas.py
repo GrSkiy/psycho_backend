@@ -1,6 +1,30 @@
 from pydantic import BaseModel
 from datetime import datetime
 from .enums import SenderType
+from typing import List
+
+# --- Chat Schemas ---
+class ChatBase(BaseModel):
+    user_id: int
+
+class ChatCreate(ChatBase):
+    pass
+
+class Chat(ChatBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# Новая схема для списка чатов
+class ChatInfo(BaseModel):
+    id: int
+    created_at: datetime
+    first_message_text: str | None = None # Текст первого сообщения
+
+    class Config:
+        from_attributes = True
 
 # --- Message Schemas ---
 class MessageBase(BaseModel):
@@ -8,31 +32,27 @@ class MessageBase(BaseModel):
     sender: SenderType
 
 class MessageCreate(MessageBase):
-    user_id: int | None = None # ID пользователя, если он есть
-    # session_id: str | None = None # ID сессии
+    pass
 
 class Message(MessageBase):
     id: int
-    user_id: int | None
-    # session_id: str | None
+    chat_id: int
     timestamp: datetime
 
     class Config:
-        from_attributes = True # Раньше было orm_mode = True
+        from_attributes = True
 
 # --- User Schemas ---
 class UserBase(BaseModel):
-    username: str | None = None # Или email, если используешь его
-    # email: str
+    username: str | None = None
 
 class UserCreate(UserBase):
-    # password: str # Пароль передается только при создании
     pass
 
 class User(UserBase):
     id: int
     created_at: datetime
-    messages: list[Message] = [] # Показываем сообщения пользователя
+    chats: List[Chat] = []
 
     class Config:
-        from_attributes = True # Раньше было orm_mode = True 
+        from_attributes = True 
