@@ -7,38 +7,116 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
     ports:
-      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
+      - "5432:5432"
     restart: unless-stopped
     networks:
       - app-network
+
+  redis:
+    image: redis:6
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+    restart: unless-stopped
 
   backend:
     container_name: fastapi_app
     build: .
     volumes:
-      - ./app:/app # Монтируем локальную директорию для hot-reload
+      - .:/app  # Монтируем весь проект
     ports:
       - "8000:8000"
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_PORT=${POSTGRES_PORT}
-      # Для асинхронного доступа к БД с asyncpg:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
-      # Если используете psycopg2 (синхронный):
-      # - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      # Другие переменные окружения можно добавить здесь
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/postgres
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DEEPSEEK_API_KEY=sk-a240c8aa262f4573a31e032ca68f8346
     depends_on:
       - db
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+      - redis
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    networks:
+      - app-network
+
+  worker_llm:
+    build: .
+    container_name: worker_llm
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/postgres
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DEEPSEEK_API_KEY=sk-a240c8aa262f4573a31e032ca68f8346
+    depends_on:
+      - redis
+      - backend
+    command: celery -A app.workers.celery_app worker -Q llm_queue -l INFO
+    networks:
+      - app-network
+
+  worker_db:
+    build: .
+    container_name: worker_db
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/postgres
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - db
+      - backend
+    command: celery -A app.workers.celery_app worker -Q db_queue -l INFO
+    networks:
+      - app-network
+
+  worker_context:
+    build: .
+    container_name: worker_context
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/postgres
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DEEPSEEK_API_KEY=sk-a240c8aa262f4573a31e032ca68f8346
+    depends_on:
+      - redis
+      - backend
+    command: celery -A app.workers.celery_app worker -Q context_queue -l INFO
+    networks:
+      - app-network
+
+  flower:
+    build: .
+    container_name: flower
+    volumes:
+      - .:/app
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - worker_llm
+      - worker_db
+    command: celery -A app.workers.celery_app flower
     networks:
       - app-network
 

@@ -1,55 +1,62 @@
-from db.schemas import ChatInfo, MessageCreate, Message
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
-import json
-import os # Для чтения переменных окружения
-from openai import OpenAI # Импортируем OpenAI SDK
-from sqlalchemy.ext.asyncio import AsyncSession # Импорт
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from db.database import AsyncSessionFactory, get_db # Нужна фабрика сессий и функция get_db
-import traceback # Добавить импорт в начало файла
-from sqlalchemy.exc import IntegrityError
-from typing import List, Dict, Any # Добавить для типизации
-from datetime import datetime
+from app.db.database import engine # Нужна фабрика сессий и функция get_db
+from sqlalchemy import text
+import logging
+import warnings
 
 # Импорты ваших модулей
-from db import crud, models # Импорт CRUD, схем и моделей
+from app.db.seeds.user_seed import seed_initial_user
+from app.db.models import Base
 
 # Импортируем WebSocket роутер
-from api.websockets.chat_ws import router as chat_ws_router
+from app.api.websockets.chat_ws import router as chat_ws_router
 
-# --- Настройка клиента DeepSeek ---
-# Читаем API ключ из переменных окружения
-DEEPSEEK_API_KEY = "sk-a240c8aa262f4573a31e032ca68f8346"
+warnings.filterwarnings("ignore", module="sqlalchemy")
+logging.getLogger("sqlalchemy").setLevel(logging.CRITICAL)
+logging.getLogger("sqlalchemy.engine").propagate = False
+logging.getLogger("sqlalchemy.engine").handlers = []
 
-# Инициализируем клиент только если ключ есть
-client = None
-if DEEPSEEK_API_KEY:
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-# ------------------------------------
+async def init_db():
+    print("Инициализация базы данных...")
 
-# --- Функция для создания пользователя при старте ---
-async def seed_initial_user():
-    if AsyncSessionFactory is None:
-        print("Фабрика сессий не инициализирована, пропуск сидинга.")
-        return
-    print("Проверка/создание начального пользователя...")
-    async with AsyncSessionFactory() as session:
-        # Пытаемся получить или создать пользователя с ID=1
-        # Для примера, username будет 'testuser1'
-        # ВНИМАНИЕ: ID=1 может не сработать как ожидается (см. crud.py)
-
-        await crud.get_or_create_user(db=session, user_id=1, username="testuser1")
-        # Можно добавить создание других начальных данных здесь
-    print("Проверка/создание начального пользователя завершено.")
-
+    try:
+        async with engine.begin() as conn:
+            query = text("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
+            result = await conn.execute(query)
+            existing_tables = [row[0] for row in result.fetchall()]
+            
+            if existing_tables:
+                print(f"Существующие таблицы: {existing_tables}")
+                print("✅ Таблицы уже созданы, пропускаем создание.")
+                
+                # СБРОС ТАБЛИЦ
+                # Раскомментируйте следующие строки, если хотите пересоздать таблицы:
+                # await conn.run_sync(lambda conn: Base.metadata.drop_all(conn))
+                # await conn.run_sync(lambda conn: Base.metadata.create_all(conn))
+                # print("Таблицы пересозданы.")
+            else:
+                print("🔄 Таблиц не найдено, создаем...")
+                await conn.run_sync(lambda conn: Base.metadata.create_all(conn))
+                
+                # Проверяем созданные таблицы
+                result = await conn.execute(query)
+                created_tables = [row[0] for row in result.fetchall()]
+                print(f"✅ Таблицы созданы: {created_tables}")
+            
+        print("База данных инициализирована.")
+    except Exception as e:
+        print(f"Ошибка при инициализации базы данных: {e}")
+        raise
 
 # --- Контекстный менеджер для управления жизненным циклом (включая startup) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Код перед запуском приложения
+    # Инициализация БД при запуске
+    await init_db()
     await seed_initial_user()
+
     yield
-    # Код после остановки приложения (если нужен)
     print("Приложение останавливается.")
 
 
@@ -65,15 +72,15 @@ async def read_root():
     return {"message": "Hello World"}
 
 
-@app.get("/users/{user_id}/chats", response_model=List[ChatInfo])
-async def read_user_chats(
-    user_id: int, skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)
-):
-    # В реальном приложении здесь должна быть проверка,
-    # что текущий аутентифицированный пользователь запрашивает свои чаты
-    # или имеет права на просмотр чатов user_id.
-    chats = await crud.get_chats_by_user(db=db, user_id=user_id, skip=skip, limit=limit)
-    # Убираем TODO про добавление превью, так как оно теперь есть
-    return chats
+# @app.get("/users/{user_id}/chats", response_model=List[ChatInfo])
+# async def read_user_chats(
+#     user_id: int, skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)
+# ):
+#     # В реальном приложении здесь должна быть проверка,
+#     # что текущий аутентифицированный пользователь запрашивает свои чаты
+#     # или имеет права на просмотр чатов user_id.
+#     chats = await crud.get_chats_by_user(db=db, user_id=user_id, skip=skip, limit=limit)
+#     # Убираем TODO про добавление превью, так как оно теперь есть
+#     return chats
 
-# Здесь позже можно добавить логику подключения к базе данных 
+# # Здесь позже можно добавить логику подключения к базе данных 

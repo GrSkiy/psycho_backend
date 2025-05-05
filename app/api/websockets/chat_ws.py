@@ -6,9 +6,10 @@ from datetime import datetime
 from openai import OpenAI
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from db.database import get_db
-from db import crud
-from db.schemas import ChatInfo, MessageCreate, Message
+from app.db.database import get_db
+from app.db import crud
+from app.db.schemas import ChatInfo, MessageCreate, Message
+from app.core.service_hub import get_service_hub
 
 # Создаем роутер для WebSocket
 router = APIRouter()
@@ -222,6 +223,15 @@ async def websocket_endpoint(websocket: WebSocket, db: AsyncSession = Depends(ge
             }
             await websocket.send_json(response_payload)
             print(f"Отправлен ответ AI клиенту для чата {current_chat_id}")
+
+            # После обработки сообщения пользователя и ответа бота:
+            if service_hub.message_producer:
+                # Запускаем асинхронный анализ контекста
+                task_id = service_hub.message_producer.send_context_analysis_task(
+                    chat_id=current_chat_id,
+                    user_id=current_user_id
+                )
+                print(f"Запущен анализ контекста, task_id: {task_id}")
 
     except WebSocketDisconnect:
         print(f"Клиент отключился (чат {current_chat_id}, пользователь {current_user_id})")
