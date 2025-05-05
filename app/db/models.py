@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy.sql import func
 from datetime import datetime
 from .database import Base
-from .enums import SenderType
+from .schemas.enums import SenderType
 
 class User(Base):
     __tablename__ = "users"

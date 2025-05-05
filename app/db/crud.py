@@ -3,7 +3,11 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, text
 from sqlalchemy.orm import aliased
-from . import models, schemas
+
+# Обновленные импорты схем
+from .schemas.user import UserCreate
+from .schemas.chat import ChatInfo, MessageCreate
+from . import models
 
 # --- User CRUD ---
 async def get_user(db: AsyncSession, user_id: int) -> models.User | None:
@@ -14,7 +18,7 @@ async def get_user_by_username(db: AsyncSession, username: str) -> models.User |
     result = await db.execute(select(models.User).where(models.User.username == username))
     return result.scalar_one_or_none()
 
-async def create_user(db: AsyncSession, user: schemas.UserCreate) -> models.User:
+async def create_user(db: AsyncSession, user: UserCreate) -> models.User:
     # В реальном приложении здесь нужно хешировать пароль
     # fake_hashed_password = user.password + "notreallyhashed"
     db_user = models.User(
@@ -34,7 +38,7 @@ async def get_or_create_user(db: AsyncSession, user_id: int, username: str | Non
         return db_user
     # Создаем пользователя, если его нет
     # Убедись, что схема UserCreate соответствует
-    user_in = schemas.UserCreate(username=username or f"user_{user_id}")
+    user_in = UserCreate(username=username or f"user_{user_id}")
     print(f"Создание пользователя с ID {user_id} и username {user_in.username}...")
     new_user = await create_user(db=db, user=user_in)
     # --- ВАЖНО: Установка ID вручную (ОПАСНО В PRODUCTION!) ---
@@ -66,7 +70,7 @@ async def get_chat(db: AsyncSession, chat_id: int) -> models.Chat | None:
     result = await db.execute(select(models.Chat).where(models.Chat.id == chat_id))
     return result.scalar_one_or_none()
 
-async def get_chats_by_user(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 100) -> list[schemas.ChatInfo]:
+async def get_chats_by_user(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 100) -> list[ChatInfo]:
     """Получает список чатов для пользователя с текстом первого сообщения."""
 
     # 1. Подзапрос для нахождения ID первого сообщения в каждом чате пользователя
@@ -111,12 +115,12 @@ async def get_chats_by_user(db: AsyncSession, user_id: int, skip: int = 0, limit
     # Преобразуем результат в список объектов ChatInfo
     chat_infos_raw = result.mappings().all()
 
-    chat_infos = [schemas.ChatInfo(**chat_data) for chat_data in chat_infos_raw]
+    chat_infos = [ChatInfo(**chat_data) for chat_data in chat_infos_raw]
 
     return chat_infos
 
 # --- Message CRUD ---
-async def create_message(db: AsyncSession, message: schemas.MessageCreate, chat_id: int) -> models.Message:
+async def create_message(db: AsyncSession, message: MessageCreate, chat_id: int) -> models.Message:
     """Создает сообщение в указанном чате."""
     # Проверка существования чата (опционально, но хорошо для надежности)
     db_chat = await get_chat(db, chat_id)
